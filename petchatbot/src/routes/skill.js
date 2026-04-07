@@ -767,7 +767,21 @@ router.post('/fallback', async (req, res) => {
 
     switch (cmd) {
       case '/시작': {
-        const pet = await petManager.initRoom(roomId, userId);
+        // 이미 펫이 있으면 정보 표시
+        const existingStatus = await petManager.getPetStatus(roomId, BASE_URL);
+        if (existingStatus && existingStatus.pet.level > 1) {
+          return res.json(kakao.basicCardWithQuickReplies({
+            title: `이미 ${existingStatus.pet.name}(이)가 있어요!`,
+            description: `Lv.${existingStatus.pet.level} ${existingStatus.pet.name}\n\n이미 펫이 있어서 새로 만들 수 없어요.\n/정보 로 펫 상태를 확인하세요!`,
+            imageUrl: existingStatus.display.imageUrl,
+            quickReplies: [
+              { label: '📊 펫 정보', messageText: '/정보' },
+              { label: '🍖 먹이주기', messageText: '/먹이' },
+              { label: '📖 도움말', messageText: '/도움말' },
+            ],
+          }));
+        }
+        await petManager.initRoom(roomId, userId);
         return res.json(kakao.basicCardWithQuickReplies({
           title: '🥚 펫이 태어났어요!',
           description: `방에 새로운 알이 나타났어요!\n모두 함께 먹이를 주고 키워보세요!\n\n💰 시작 골드: 100G\n🍖 /먹이 - 먹이 주기\n📊 /정보 - 펫 상태`,
