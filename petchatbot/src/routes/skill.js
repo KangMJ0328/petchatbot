@@ -809,11 +809,6 @@ router.post('/fallback', async (req, res) => {
         const u = await petManager.getUserInfo(userId, roomId);
         return res.json(kakao.simpleText(`👤 내 정보\n\n💰 골드: ${u.gold}G\n⭐ 기여도: ${u.contribution}\n🕐 마지막 활동: ${u.last_active_at}`));
       }
-      case '/도움말':
-        return res.json(kakao.textWithQuickReplies(
-          `📖 펫 키우기 도움말\n\n── 기본 ──\n/시작 /정보 /먹이 /훈련\n/이름 /상점 /내정보\n\n── 콘텐츠 ──\n/탐험 /귀환 /일기 /운세\n/가위바위보 /퀴즈 /정답\n\n── 소셜 ──\n/랭킹 /기여도 /약탈 /방어\n/심부름 /방코드\n\n── 커스텀 ──\n/칭호 /데코 /날씨 /환생`,
-          [{ label: '📊 정보', messageText: '/정보' }, { label: '🍖 먹이', messageText: '/먹이' }, { label: '🗺️ 탐험', messageText: '/탐험' }],
-        ));
       case '/약탈':
         return res.json(kakao.simpleText((await events.startRaid(roomId, userId)).message));
       case '/방어':
@@ -911,12 +906,19 @@ router.post('/fallback', async (req, res) => {
         return res.json(kakao.simpleText(await achievements.getAllAchievements(pet.pet_id, roomId, userId)));
       }
 
+      case '/':
+      case '/도움말':
+        return res.json(kakao.textWithQuickReplies(
+          `📖 펫 키우기 도움말\n\n── 기본 ──\n/시작 /정보 /먹이 /훈련\n/이름 /상점 /내정보\n\n── 콘텐츠 ──\n/탐험 /귀환 /일기 /운세\n/가위바위보 /퀴즈 /정답\n\n── 소셜 ──\n/랭킹 /기여도 /약탈 /방어\n/심부름 /방코드\n\n── 커스텀 ──\n/칭호 /데코 /날씨 /환생`,
+          [{ label: '📊 정보', messageText: '/정보' }, { label: '🍖 먹이', messageText: '/먹이' }, { label: '🗺️ 탐험', messageText: '/탐험' }],
+        ));
+
       default:
         return res.json(kakao.textWithQuickReplies(
-          `안녕하세요! 펫 키우기 챗봇이에요! 🐾\n아래 명령어로 시작해보세요.`,
+          `안녕하세요! 펫 키우기 챗봇이에요! 🐾\n아래 명령어로 시작해보세요.\n\n/ 를 입력하면 전체 명령어를 볼 수 있어요!`,
           [
             { label: '🥚 시작', messageText: '/시작' },
-            { label: '📖 도움말', messageText: '/도움말' },
+            { label: '📖 도움말', messageText: '/' },
             { label: '📊 펫 정보', messageText: '/정보' },
           ],
         ));
