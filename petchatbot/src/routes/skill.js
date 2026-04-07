@@ -300,7 +300,7 @@ router.post('/shop', async (req, res) => {
         const stat = f.stat_bonus_type ? ` [${f.stat_bonus_type}+${f.stat_bonus_value}]` : '';
         return `${f.emoji} ${f.name} — ${f.cost}G\n   포만도+${f.fullness_gain} 경험치+${f.exp_gain}${stat}`;
       }).join('\n\n'),
-      foods.slice(0, 5).map(f => ({ label: `${f.emoji} ${f.name}`, messageText: `/먹이 ${f.food_id}` })),
+      foods.map(f => ({ label: `${f.emoji} ${f.name}`, messageText: `/먹이 ${f.food_id}` })),
     ));
   } catch (err) {
     console.error('[/shop]', err);
@@ -836,7 +836,7 @@ router.post('/fallback', async (req, res) => {
         return res.json(kakao.textWithQuickReplies(
           `🛒 먹이를 선택하세요! (보유: ${user.gold}G)\n\n` +
           foods.map(f => `${f.emoji} ${f.name} — ${f.cost}G`).join('\n'),
-          foods.slice(0, 5).map(f => ({ label: `${f.emoji} ${f.name}`, messageText: `/먹이 ${f.food_id}` })),
+          foods.map(f => ({ label: `${f.emoji} ${f.name}`, messageText: `/먹이 ${f.food_id}` })),
         ));
 
       case '/훈련':
