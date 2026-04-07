@@ -760,6 +760,8 @@ router.post('/fallback', async (req, res) => {
       await events.giveGold(userId, roomId, 20, '일일 출석 보상');
     }
 
+    console.log('[FALLBACK] utterance:', JSON.stringify(utterance), 'cmd:', JSON.stringify(cmd), 'arg:', JSON.stringify(arg));
+
     switch (cmd) {
       case '/시작': {
         const pet = await petManager.initRoom(roomId, userId);
