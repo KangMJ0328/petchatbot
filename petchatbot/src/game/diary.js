@@ -16,18 +16,18 @@ const DIARY_TEMPLATES = {
   bonus:      (d) => `${d.user || '주인'}님이 놀러 왔어요! 반가웠어요! 🎉`,
 };
 
-function generateDiary(roomId) {
+async function generateDiary(roomId) {
   const db = getDb();
 
   // 최근 24시간 활동 로그
-  const logs = db.prepare(`
+  const logs = await db.all(`
     SELECT * FROM activity_log
     WHERE room_id = ? AND created_at >= datetime('now', '-24 hours')
     ORDER BY created_at DESC
     LIMIT 50
-  `).all(roomId);
+  `, [roomId]);
 
-  const pet = db.prepare('SELECT * FROM pets WHERE room_id = ?').get(roomId);
+  const pet = await db.get('SELECT * FROM pets WHERE room_id = ?', [roomId]);
   if (!pet) return '아직 펫이 없어요!';
 
   const entries = [];

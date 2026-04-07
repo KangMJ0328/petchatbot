@@ -5,9 +5,9 @@ const REBIRTH_MIN_LEVEL = 30;
 
 // ── 환생 가능 여부 체크 ─────────────────────────────
 
-function canRebirth(roomId) {
+async function canRebirth(roomId) {
   const db = getDb();
-  const pet = db.prepare('SELECT * FROM pets WHERE room_id = ?').get(roomId);
+  const pet = await db.get('SELECT * FROM pets WHERE room_id = ?', [roomId]);
   if (!pet) return { can: false, message: '펫이 없어요!' };
   if (pet.level < REBIRTH_MIN_LEVEL) {
     return {
@@ -20,9 +20,9 @@ function canRebirth(roomId) {
 
 // ── 환생 실행 ────────────────────────────────────────
 
-function doRebirth(roomId) {
+async function doRebirth(roomId) {
   const db = getDb();
-  const pet = db.prepare('SELECT * FROM pets WHERE room_id = ?').get(roomId);
+  const pet = await db.get('SELECT * FROM pets WHERE room_id = ?', [roomId]);
   if (!pet || pet.level < REBIRTH_MIN_LEVEL) {
     return { success: false, message: `Lv.${REBIRTH_MIN_LEVEL} 이상이어야 환생할 수 있어요!` };
   }
@@ -35,56 +35,54 @@ function doRebirth(roomId) {
   const legacyChm = Math.floor(pet.charm * 0.10);
   const legacyDesc = `근력+${legacyStr} 지능+${legacyInt} 매력+${legacyChm}`;
 
-  db.transaction(() => {
-    // 환생 로그
-    db.prepare(`
-      INSERT INTO rebirth_log (room_id, generation, prev_level, prev_type, legacy_bonus)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(roomId, newGen, pet.level, pet.evolution_type, legacyDesc);
+  // 환생 로그
+  await db.run(`
+    INSERT INTO rebirth_log (room_id, generation, prev_level, prev_type, legacy_bonus)
+    VALUES (?, ?, ?, ?, ?)
+  `, [roomId, newGen, pet.level, pet.evolution_type, legacyDesc]);
 
-    // 펫 초기화 (유산 보너스 적용)
-    db.prepare(`
-      UPDATE pets SET
-        name = ?,
-        level = 1,
-        exp = 0,
-        evolution_stage = 'egg',
-        evolution_type = NULL,
-        strength = 5 + ?,
-        intelligence = 5 + ?,
-        charm = 5 + ?,
-        fullness = 50,
-        happiness = 50,
-        meat_fed = 0,
-        veggie_fed = 0,
-        nature = NULL,
-        generation = ?,
-        legacy_bonus_str = ?,
-        legacy_bonus_int = ?,
-        legacy_bonus_chm = ?,
-        well_fed_streak = 0,
-        consecutive_meat = 0,
-        current_image_key = 'egg_default',
-        updated_at = datetime('now')
-      WHERE pet_id = ?
-    `).run(
-      `${pet.name} ${newGen}세`,
-      legacyStr, legacyInt, legacyChm,
-      newGen, legacyStr, legacyInt, legacyChm,
-      pet.pet_id
-    );
+  // 펫 초기화 (유산 보너스 적용)
+  await db.run(`
+    UPDATE pets SET
+      name = ?,
+      level = 1,
+      exp = 0,
+      evolution_stage = 'egg',
+      evolution_type = NULL,
+      strength = 5 + ?,
+      intelligence = 5 + ?,
+      charm = 5 + ?,
+      fullness = 50,
+      happiness = 50,
+      meat_fed = 0,
+      veggie_fed = 0,
+      nature = NULL,
+      generation = ?,
+      legacy_bonus_str = ?,
+      legacy_bonus_int = ?,
+      legacy_bonus_chm = ?,
+      well_fed_streak = 0,
+      consecutive_meat = 0,
+      current_image_key = 'egg_default',
+      updated_at = datetime('now')
+    WHERE pet_id = ?
+  `, [
+    `${pet.name} ${newGen}세`,
+    legacyStr, legacyInt, legacyChm,
+    newGen, legacyStr, legacyInt, legacyChm,
+    pet.pet_id
+  ]);
 
-    // 새 성격 부여
-    assignNature(pet.pet_id);
+  // 새 성격 부여
+  await assignNature(pet.pet_id);
 
-    // 환생 보너스: 방 전원에게 골드
-    const users = db.prepare('SELECT * FROM users WHERE room_id = ?').all(roomId);
-    for (const u of users) {
-      db.prepare('UPDATE users SET gold = gold + 200 WHERE user_id = ? AND room_id = ?').run(u.user_id, roomId);
-    }
-  })();
+  // 환생 보너스: 방 전원에게 골드
+  const users = await db.all('SELECT * FROM users WHERE room_id = ?', [roomId]);
+  for (const u of users) {
+    await db.run('UPDATE users SET gold = gold + 200 WHERE user_id = ? AND room_id = ?', [u.user_id, roomId]);
+  }
 
-  const newPet = db.prepare('SELECT * FROM pets WHERE room_id = ?').get(roomId);
+  const newPet = await db.get('SELECT * FROM pets WHERE room_id = ?', [roomId]);
 
   return {
     success: true,
@@ -109,9 +107,9 @@ function doRebirth(roomId) {
 
 // ── 환생 히스토리 ────────────────────────────────────
 
-function getRebirthHistory(roomId) {
+async function getRebirthHistory(roomId) {
   const db = getDb();
-  return db.prepare('SELECT * FROM rebirth_log WHERE room_id = ? ORDER BY reborn_at DESC').all(roomId);
+  return await db.all('SELECT * FROM rebirth_log WHERE room_id = ? ORDER BY reborn_at DESC', [roomId]);
 }
 
 module.exports = { REBIRTH_MIN_LEVEL, canRebirth, doRebirth, getRebirthHistory };

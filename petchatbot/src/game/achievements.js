@@ -24,20 +24,22 @@ const ACHIEVEMENT_DEFS = {
 
 // ── 업적 확인 & 부여 ────────────────────────────────
 
-function checkAndGrant(roomId, pet, userId) {
+async function checkAndGrant(roomId, pet, userId) {
   const db = getDb();
   const granted = [];
 
   for (const [id, def] of Object.entries(ACHIEVEMENT_DEFS)) {
     if (def.type === 'pet' && def.check && def.check(pet)) {
-      const existing = db.prepare(
-        'SELECT 1 FROM achievements WHERE achieve_id = ? AND target_type = ? AND target_id = ? AND room_id = ?'
-      ).get(id, 'pet', String(pet.pet_id), roomId);
+      const existing = await db.get(
+        'SELECT 1 FROM achievements WHERE achieve_id = ? AND target_type = ? AND target_id = ? AND room_id = ?',
+        [id, 'pet', String(pet.pet_id), roomId]
+      );
 
       if (!existing) {
-        db.prepare(
-          'INSERT INTO achievements (achieve_id, target_type, target_id, room_id) VALUES (?, ?, ?, ?)'
-        ).run(id, 'pet', String(pet.pet_id), roomId);
+        await db.run(
+          'INSERT INTO achievements (achieve_id, target_type, target_id, room_id) VALUES (?, ?, ?, ?)',
+          [id, 'pet', String(pet.pet_id), roomId]
+        );
         granted.push(def);
       }
     }
@@ -46,19 +48,21 @@ function checkAndGrant(roomId, pet, userId) {
   return granted;
 }
 
-function grantUserAchievement(userId, roomId, achieveId) {
+async function grantUserAchievement(userId, roomId, achieveId) {
   const db = getDb();
   const def = ACHIEVEMENT_DEFS[achieveId];
   if (!def) return null;
 
-  const existing = db.prepare(
-    'SELECT 1 FROM achievements WHERE achieve_id = ? AND target_type = ? AND target_id = ? AND room_id = ?'
-  ).get(achieveId, 'user', userId, roomId);
+  const existing = await db.get(
+    'SELECT 1 FROM achievements WHERE achieve_id = ? AND target_type = ? AND target_id = ? AND room_id = ?',
+    [achieveId, 'user', userId, roomId]
+  );
 
   if (!existing) {
-    db.prepare(
-      'INSERT INTO achievements (achieve_id, target_type, target_id, room_id) VALUES (?, ?, ?, ?)'
-    ).run(achieveId, 'user', userId, roomId);
+    await db.run(
+      'INSERT INTO achievements (achieve_id, target_type, target_id, room_id) VALUES (?, ?, ?, ?)',
+      [achieveId, 'user', userId, roomId]
+    );
     return def;
   }
   return null;
@@ -66,26 +70,28 @@ function grantUserAchievement(userId, roomId, achieveId) {
 
 // ── 칭호 조회 ────────────────────────────────────────
 
-function getPetTitles(petId, roomId) {
+async function getPetTitles(petId, roomId) {
   const db = getDb();
-  const rows = db.prepare(
-    'SELECT achieve_id FROM achievements WHERE target_type = ? AND target_id = ? AND room_id = ?'
-  ).all('pet', String(petId), roomId);
+  const rows = await db.all(
+    'SELECT achieve_id FROM achievements WHERE target_type = ? AND target_id = ? AND room_id = ?',
+    ['pet', String(petId), roomId]
+  );
 
   return rows.map(r => ACHIEVEMENT_DEFS[r.achieve_id]).filter(Boolean);
 }
 
-function getUserTitles(userId, roomId) {
+async function getUserTitles(userId, roomId) {
   const db = getDb();
-  const rows = db.prepare(
-    'SELECT achieve_id FROM achievements WHERE target_type = ? AND target_id = ? AND room_id = ?'
-  ).all('user', userId, roomId);
+  const rows = await db.all(
+    'SELECT achieve_id FROM achievements WHERE target_type = ? AND target_id = ? AND room_id = ?',
+    ['user', userId, roomId]
+  );
 
   return rows.map(r => ACHIEVEMENT_DEFS[r.achieve_id]).filter(Boolean);
 }
 
-function getActivePetTitle(petId, roomId) {
-  const titles = getPetTitles(petId, roomId);
+async function getActivePetTitle(petId, roomId) {
+  const titles = await getPetTitles(petId, roomId);
   if (titles.length === 0) return '';
   // 가장 최근(마지막) 칭호 표시
   const t = titles[titles.length - 1];
@@ -94,9 +100,9 @@ function getActivePetTitle(petId, roomId) {
 
 // ── 전체 업적 목록 ──────────────────────────────────
 
-function getAllAchievements(petId, roomId, userId) {
-  const petTitles = getPetTitles(petId, roomId);
-  const userTitles = getUserTitles(userId, roomId);
+async function getAllAchievements(petId, roomId, userId) {
+  const petTitles = await getPetTitles(petId, roomId);
+  const userTitles = await getUserTitles(userId, roomId);
   const petIds = new Set(petTitles.map(t => t.name));
   const userIds = new Set(userTitles.map(t => t.name));
 

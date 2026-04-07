@@ -27,13 +27,13 @@ const QUIZ_POOL = [
 
 // ── 퀴즈 출제 (자동 or 수동) ────────────────────────
 
-function createQuiz(roomId) {
+async function createQuiz(roomId) {
   const db = getDb();
 
   // 진행 중인 퀴즈 체크
-  const active = db.prepare(`
+  const active = await db.get(`
     SELECT * FROM quiz_events WHERE room_id = ? AND resolved = 0 AND expires_at > datetime('now')
-  `).get(roomId);
+  `, [roomId]);
   if (active) {
     return {
       success: false,
@@ -45,10 +45,10 @@ function createQuiz(roomId) {
   const quiz = QUIZ_POOL[Math.floor(Math.random() * QUIZ_POOL.length)];
   const reward = Math.floor(Math.random() * 30) + 30; // 30~60G
 
-  db.prepare(`
+  await db.run(`
     INSERT INTO quiz_events (room_id, question, answer, reward_gold, expires_at)
     VALUES (?, ?, ?, ?, datetime('now', '+60 seconds'))
-  `).run(roomId, quiz.q, quiz.a.toLowerCase(), reward);
+  `, [roomId, quiz.q, quiz.a.toLowerCase(), reward]);
 
   return {
     success: true,
@@ -59,13 +59,13 @@ function createQuiz(roomId) {
 
 // ── 정답 확인 ────────────────────────────────────────
 
-function answerQuiz(roomId, userId, answer) {
+async function answerQuiz(roomId, userId, answer) {
   const db = getDb();
 
-  const quiz = db.prepare(`
+  const quiz = await db.get(`
     SELECT * FROM quiz_events WHERE room_id = ? AND resolved = 0 AND expires_at > datetime('now')
     ORDER BY created_at DESC LIMIT 1
-  `).get(roomId);
+  `, [roomId]);
 
   if (!quiz) {
     return { success: false, message: '진행 중인 퀴즈가 없어요!' };
@@ -77,12 +77,10 @@ function answerQuiz(roomId, userId, answer) {
   }
 
   // 정답!
-  db.transaction(() => {
-    db.prepare('UPDATE quiz_events SET resolved = 1, answered_by = ? WHERE quiz_id = ?').run(userId, quiz.quiz_id);
-    db.prepare('UPDATE users SET gold = gold + ? WHERE user_id = ? AND room_id = ?').run(quiz.reward_gold, userId, roomId);
-    db.prepare(`INSERT INTO activity_log (room_id, user_id, action, detail, gold_change) VALUES (?, ?, 'quiz', '퀴즈 정답', ?)`)
-      .run(roomId, userId, quiz.reward_gold);
-  })();
+  await db.run('UPDATE quiz_events SET resolved = 1, answered_by = ? WHERE quiz_id = ?', [userId, quiz.quiz_id]);
+  await db.run('UPDATE users SET gold = gold + ? WHERE user_id = ? AND room_id = ?', [quiz.reward_gold, userId, roomId]);
+  await db.run(`INSERT INTO activity_log (room_id, user_id, action, detail, gold_change) VALUES (?, ?, 'quiz', '퀴즈 정답', ?)`,
+    [roomId, userId, quiz.reward_gold]);
 
   return {
     success: true,
@@ -92,10 +90,10 @@ function answerQuiz(roomId, userId, answer) {
 
 // ── 만료된 퀴즈 정리 ────────────────────────────────
 
-function resolveExpiredQuizzes() {
+async function resolveExpiredQuizzes() {
   const db = getDb();
-  return db.prepare(`UPDATE quiz_events SET resolved = 1 WHERE resolved = 0 AND expires_at <= datetime('now')`)
-    .run().changes;
+  const result = await db.run(`UPDATE quiz_events SET resolved = 1 WHERE resolved = 0 AND expires_at <= datetime('now')`, []);
+  return result.changes || 0;
 }
 
 module.exports = { createQuiz, answerQuiz, resolveExpiredQuizzes };

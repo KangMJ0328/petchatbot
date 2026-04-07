@@ -15,11 +15,11 @@ const NATURES = {
 
 // ── 성격 부여 (출생 시 랜덤) ─────────────────────────
 
-function assignNature(petId) {
+async function assignNature(petId) {
   const db = getDb();
   const keys = Object.keys(NATURES);
   const nature = keys[Math.floor(Math.random() * keys.length)];
-  db.prepare('UPDATE pets SET nature = ? WHERE pet_id = ?').run(nature, petId);
+  await db.run('UPDATE pets SET nature = ? WHERE pet_id = ?', [nature, petId]);
   return NATURES[nature];
 }
 

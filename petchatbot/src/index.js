@@ -25,20 +25,25 @@ app.get('/', (req, res) => {
 // 카카오 스킬 라우트
 app.use('/api/skill', skillRouter);
 
-// DB 초기화
-initializeDb();
+// DB 초기화 (async)
+(async () => {
+  await initializeDb();
 
-// 만료된 이벤트 정리 (매분)
-cron.schedule('* * * * *', () => {
-  const raids = resolveExpiredRaids();
-  const quizzes = resolveExpiredQuizzes();
-  if (raids > 0) console.log(`[CRON] 만료된 약탈 ${raids}건 처리`);
-  if (quizzes > 0) console.log(`[CRON] 만료된 퀴즈 ${quizzes}건 처리`);
-});
+  // 만료된 이벤트 정리 (매분)
+  cron.schedule('* * * * *', async () => {
+    try {
+      const raids = await resolveExpiredRaids();
+      const quizzes = await resolveExpiredQuizzes();
+      if (raids > 0) console.log(`[CRON] 만료된 약탈 ${raids}건 처리`);
+      if (quizzes > 0) console.log(`[CRON] 만료된 퀴즈 ${quizzes}건 처리`);
+    } catch (err) {
+      console.error('[CRON] 오류:', err);
+    }
+  });
 
-// 서버 시작
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`
+  // 서버 시작
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`
 ╔══════════════════════════════════════════╗
 ║  🐾 펫 키우기 챗봇 서버                  ║
 ║  포트: ${PORT}                              ║
@@ -47,5 +52,6 @@ app.listen(PORT, '0.0.0.0', () => {
 ║  카카오 오픈빌더 스킬 URL:                ║
 ║  POST http://[서버IP]:${PORT}/api/skill/*  ║
 ╚══════════════════════════════════════════╝
-  `);
-});
+    `);
+  });
+})();

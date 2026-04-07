@@ -1,33 +1,31 @@
 const { getDb } = require('../db/schema');
 
-function ensureUserLocal(userId, roomId) {
+async function ensureUserLocal(userId, roomId) {
   const db = getDb();
-  db.prepare('INSERT OR IGNORE INTO users (user_id, room_id) VALUES (?, ?)').run(userId, roomId);
-  return db.prepare('SELECT * FROM users WHERE user_id = ? AND room_id = ?').get(userId, roomId);
+  await db.run('INSERT OR IGNORE INTO users (user_id, room_id) VALUES (?, ?)', [userId, roomId]);
+  return await db.get('SELECT * FROM users WHERE user_id = ? AND room_id = ?', [userId, roomId]);
 }
 
 // ── 돌발 이벤트: 황금 알 (먹이 줄 때 10% 확률) ──────
 
-function tryGoldenEgg(roomId, triggerUserId) {
+async function tryGoldenEgg(roomId, triggerUserId) {
   if (Math.random() > 0.10) return null; // 90% 확률로 아무 일 없음
 
   const db = getDb();
-  const users = db.prepare('SELECT * FROM users WHERE room_id = ?').all(roomId);
+  const users = await db.all('SELECT * FROM users WHERE room_id = ?', [roomId]);
   if (users.length === 0) return null;
 
   const goldPerUser = Math.floor(50 / users.length) + 10;
   const totalGold = goldPerUser * users.length;
 
-  db.transaction(() => {
-    for (const u of users) {
-      db.prepare('UPDATE users SET gold = gold + ? WHERE user_id = ? AND room_id = ?')
-        .run(goldPerUser, u.user_id, roomId);
-    }
-    db.prepare(`
-      INSERT INTO activity_log (room_id, user_id, action, detail, gold_change)
-      VALUES (?, ?, 'golden_egg', ?, ?)
-    `).run(roomId, triggerUserId, `황금알 발견! ${users.length}명에게 ${goldPerUser}G씩 분배`, totalGold);
-  })();
+  for (const u of users) {
+    await db.run('UPDATE users SET gold = gold + ? WHERE user_id = ? AND room_id = ?',
+      [goldPerUser, u.user_id, roomId]);
+  }
+  await db.run(`
+    INSERT INTO activity_log (room_id, user_id, action, detail, gold_change)
+    VALUES (?, ?, 'golden_egg', ?, ?)
+  `, [roomId, triggerUserId, `황금알 발견! ${users.length}명에게 ${goldPerUser}G씩 분배`, totalGold]);
 
   return {
     triggered: true,
@@ -40,21 +38,21 @@ function tryGoldenEgg(roomId, triggerUserId) {
 
 // ── 약탈 시스템 ──────────────────────────────────────
 
-function startRaid(roomId, attackerId) {
+async function startRaid(roomId, attackerId) {
   const db = getDb();
 
   // 진행 중인 약탈이 있는지 체크
-  const existing = db.prepare(`
+  const existing = await db.get(`
     SELECT * FROM raid_events WHERE room_id = ? AND resolved = 0 AND expires_at > datetime('now')
-  `).get(roomId);
+  `, [roomId]);
   if (existing) return { success: false, message: '이미 진행 중인 약탈이 있어요!' };
 
   const goldAtStake = Math.floor(Math.random() * 30) + 10;
   // 60초 타임 어택
-  db.prepare(`
+  await db.run(`
     INSERT INTO raid_events (room_id, attacker_id, target_item, gold_at_stake, expires_at)
     VALUES (?, ?, '간식', ?, datetime('now', '+60 seconds'))
-  `).run(roomId, attackerId, goldAtStake);
+  `, [roomId, attackerId, goldAtStake]);
 
   return {
     success: true,
@@ -63,14 +61,14 @@ function startRaid(roomId, attackerId) {
   };
 }
 
-function defendRaid(roomId, defenderId) {
+async function defendRaid(roomId, defenderId) {
   const db = getDb();
 
-  const raid = db.prepare(`
+  const raid = await db.get(`
     SELECT * FROM raid_events
     WHERE room_id = ? AND resolved = 0 AND expires_at > datetime('now')
     ORDER BY created_at DESC LIMIT 1
-  `).get(roomId);
+  `, [roomId]);
 
   if (!raid) return { success: false, message: '현재 진행 중인 약탈이 없어요.' };
 
@@ -79,15 +77,13 @@ function defendRaid(roomId, defenderId) {
     return { success: false, message: '자신의 약탈은 방어할 수 없어요! 😅' };
   }
 
-  db.transaction(() => {
-    db.prepare('UPDATE raid_events SET defended = 1, defender_id = ?, resolved = 1 WHERE raid_id = ?')
-      .run(defenderId, raid.raid_id);
-    // 방어 보상
-    db.prepare('UPDATE users SET gold = gold + ? WHERE user_id = ? AND room_id = ?')
-      .run(Math.floor(raid.gold_at_stake / 2), defenderId, roomId);
-    db.prepare(`INSERT INTO activity_log (room_id, user_id, action, detail, gold_change) VALUES (?, ?, 'defend', '약탈 방어 성공', ?)`)
-      .run(roomId, defenderId, Math.floor(raid.gold_at_stake / 2));
-  })();
+  await db.run('UPDATE raid_events SET defended = 1, defender_id = ?, resolved = 1 WHERE raid_id = ?',
+    [defenderId, raid.raid_id]);
+  // 방어 보상
+  await db.run('UPDATE users SET gold = gold + ? WHERE user_id = ? AND room_id = ?',
+    [Math.floor(raid.gold_at_stake / 2), defenderId, roomId]);
+  await db.run(`INSERT INTO activity_log (room_id, user_id, action, detail, gold_change) VALUES (?, ?, 'defend', '약탈 방어 성공', ?)`,
+    [roomId, defenderId, Math.floor(raid.gold_at_stake / 2)]);
 
   return {
     success: true,
@@ -96,18 +92,16 @@ function defendRaid(roomId, defenderId) {
 }
 
 // 만료된 약탈 처리 (서버에서 주기적으로 호출)
-function resolveExpiredRaids() {
+async function resolveExpiredRaids() {
   const db = getDb();
-  const expired = db.prepare(`
+  const expired = await db.all(`
     SELECT * FROM raid_events WHERE resolved = 0 AND expires_at <= datetime('now')
-  `).all();
+  `, []);
 
   for (const raid of expired) {
-    db.transaction(() => {
-      db.prepare('UPDATE raid_events SET resolved = 1 WHERE raid_id = ?').run(raid.raid_id);
-      // 약탈 성공 — 펫 행복도 감소
-      db.prepare('UPDATE pets SET happiness = MAX(0, happiness - 10) WHERE room_id = ?').run(raid.room_id);
-    })();
+    await db.run('UPDATE raid_events SET resolved = 1 WHERE raid_id = ?', [raid.raid_id]);
+    // 약탈 성공 — 펫 행복도 감소
+    await db.run('UPDATE pets SET happiness = MAX(0, happiness - 10) WHERE room_id = ?', [raid.room_id]);
   }
 
   return expired.length;
@@ -115,37 +109,37 @@ function resolveExpiredRaids() {
 
 // ── 랭킹 ────────────────────────────────────────────
 
-function getRanking(limit = 10) {
+async function getRanking(limit = 10) {
   const db = getDb();
-  return db.prepare(`
+  return await db.all(`
     SELECT p.*, r.room_name, r.total_exp
     FROM pets p
     JOIN rooms r ON p.room_id = r.room_id
     ORDER BY p.level DESC, p.exp DESC
     LIMIT ?
-  `).all(limit);
+  `, [limit]);
 }
 
-function getRoomRanking(roomId) {
+async function getRoomRanking(roomId) {
   const db = getDb();
-  return db.prepare(`
+  return await db.all(`
     SELECT u.*, ROW_NUMBER() OVER (ORDER BY u.contribution DESC) as rank
     FROM users u
     WHERE u.room_id = ?
     ORDER BY u.contribution DESC
     LIMIT 10
-  `).all(roomId);
+  `, [roomId]);
 }
 
 // ── 골드 지급 (출석/보너스) ──────────────────────────
 
-function giveGold(userId, roomId, amount, reason) {
+async function giveGold(userId, roomId, amount, reason) {
   const db = getDb();
-  ensureUserLocal(userId, roomId);
-  db.prepare('UPDATE users SET gold = gold + ?, last_active_at = datetime(\'now\') WHERE user_id = ? AND room_id = ?')
-    .run(amount, userId, roomId);
-  db.prepare(`INSERT INTO activity_log (room_id, user_id, action, detail, gold_change) VALUES (?, ?, 'bonus', ?, ?)`)
-    .run(roomId, userId, reason, amount);
+  await ensureUserLocal(userId, roomId);
+  await db.run('UPDATE users SET gold = gold + ?, last_active_at = datetime(\'now\') WHERE user_id = ? AND room_id = ?',
+    [amount, userId, roomId]);
+  await db.run(`INSERT INTO activity_log (room_id, user_id, action, detail, gold_change) VALUES (?, ?, 'bonus', ?, ?)`,
+    [roomId, userId, reason, amount]);
   return { success: true, amount };
 }
 

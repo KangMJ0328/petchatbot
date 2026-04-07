@@ -17,14 +17,15 @@ const FORTUNES = [
 
 // ── 운세 뽑기 (일일 1회) ─────────────────────────────
 
-function drawFortune(userId, roomId) {
+async function drawFortune(userId, roomId) {
   const db = getDb();
   const today = new Date().toISOString().split('T')[0];
 
   // 오늘 이미 뽑았는지 체크
-  const existing = db.prepare(
-    'SELECT * FROM fortune_log WHERE user_id = ? AND room_id = ? AND fortune_date = ?'
-  ).get(userId, roomId, today);
+  const existing = await db.get(
+    'SELECT * FROM fortune_log WHERE user_id = ? AND room_id = ? AND fortune_date = ?',
+    [userId, roomId, today]
+  );
 
   if (existing) {
     return {
@@ -39,10 +40,10 @@ function drawFortune(userId, roomId) {
   // 랜덤 운세
   const fortune = FORTUNES[Math.floor(Math.random() * FORTUNES.length)];
 
-  db.prepare(`
+  await db.run(`
     INSERT INTO fortune_log (user_id, room_id, fortune_date, fortune_text, buff_type, buff_value)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(userId, roomId, today, fortune.text, fortune.buff, fortune.value);
+  `, [userId, roomId, today, fortune.text, fortune.buff, fortune.value]);
 
   const buffMsg = fortune.buff ? `\n\n🎯 버프: ${getBuffDescription(fortune.buff, fortune.value)}` : '';
 
@@ -56,12 +57,13 @@ function drawFortune(userId, roomId) {
 
 // ── 오늘 버프 확인 ───────────────────────────────────
 
-function getTodayBuff(userId, roomId) {
+async function getTodayBuff(userId, roomId) {
   const db = getDb();
   const today = new Date().toISOString().split('T')[0];
-  const row = db.prepare(
-    'SELECT buff_type, buff_value FROM fortune_log WHERE user_id = ? AND room_id = ? AND fortune_date = ?'
-  ).get(userId, roomId, today);
+  const row = await db.get(
+    'SELECT buff_type, buff_value FROM fortune_log WHERE user_id = ? AND room_id = ? AND fortune_date = ?',
+    [userId, roomId, today]
+  );
 
   return row ? { buff: row.buff_type, value: row.buff_value } : null;
 }
@@ -82,9 +84,9 @@ function getBuffDescription(buff, value) {
 
 // ── 가위바위보 (간식 내기) ───────────────────────────
 
-function rockPaperScissors(userId, roomId, userChoice, betGold) {
+async function rockPaperScissors(userId, roomId, userChoice, betGold) {
   const db = getDb();
-  const user = db.prepare('SELECT * FROM users WHERE user_id = ? AND room_id = ?').get(userId, roomId);
+  const user = await db.get('SELECT * FROM users WHERE user_id = ? AND room_id = ?', [userId, roomId]);
   if (!user) return { success: false, message: '유저 정보를 찾을 수 없어요.' };
 
   if (user.gold < betGold) {
@@ -111,19 +113,17 @@ function rockPaperScissors(userId, roomId, userChoice, betGold) {
 
   let message = `✊✌️✋ 가위바위보!\n\n당신: ${userChoice} vs 펫: ${petChoice}\n\n`;
 
-  db.transaction(() => {
-    if (result === 'win') {
-      db.prepare('UPDATE users SET gold = gold + ? WHERE user_id = ? AND room_id = ?').run(betGold, userId, roomId);
-      message += `🎉 승리! +${betGold}G 획득!`;
-    } else if (result === 'lose') {
-      db.prepare('UPDATE users SET gold = gold - ? WHERE user_id = ? AND room_id = ?').run(betGold, userId, roomId);
-      // 진 골드는 펫 행복도로
-      db.prepare('UPDATE pets SET happiness = MIN(100, happiness + 5) WHERE room_id = ?').run(roomId);
-      message += `😢 패배... -${betGold}G (펫이 좋아해요! 행복도+5)`;
-    } else {
-      message += `🤝 무승부! 골드 변동 없음.`;
-    }
-  })();
+  if (result === 'win') {
+    await db.run('UPDATE users SET gold = gold + ? WHERE user_id = ? AND room_id = ?', [betGold, userId, roomId]);
+    message += `🎉 승리! +${betGold}G 획득!`;
+  } else if (result === 'lose') {
+    await db.run('UPDATE users SET gold = gold - ? WHERE user_id = ? AND room_id = ?', [betGold, userId, roomId]);
+    // 진 골드는 펫 행복도로
+    await db.run('UPDATE pets SET happiness = MIN(100, happiness + 5) WHERE room_id = ?', [roomId]);
+    message += `😢 패배... -${betGold}G (펫이 좋아해요! 행복도+5)`;
+  } else {
+    message += `🤝 무승부! 골드 변동 없음.`;
+  }
 
   return { success: true, message, result };
 }

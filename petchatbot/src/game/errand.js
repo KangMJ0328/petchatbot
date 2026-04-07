@@ -3,28 +3,28 @@ const crypto = require('crypto');
 
 // ── 방 코드 생성/조회 ───────────────────────────────
 
-function getRoomCode(roomId) {
+async function getRoomCode(roomId) {
   const db = getDb();
-  const room = db.prepare('SELECT room_code FROM rooms WHERE room_id = ?').get(roomId);
+  const room = await db.get('SELECT room_code FROM rooms WHERE room_id = ?', [roomId]);
   if (room?.room_code) return room.room_code;
 
   // 6자리 코드 생성
   const code = crypto.randomBytes(3).toString('hex').toUpperCase();
-  db.prepare('UPDATE rooms SET room_code = ? WHERE room_id = ?').run(code, roomId);
+  await db.run('UPDATE rooms SET room_code = ? WHERE room_id = ?', [code, roomId]);
   return code;
 }
 
-function findRoomByCode(code) {
+async function findRoomByCode(code) {
   const db = getDb();
-  return db.prepare('SELECT * FROM rooms WHERE room_code = ?').get(code.toUpperCase());
+  return await db.get('SELECT * FROM rooms WHERE room_code = ?', [code.toUpperCase()]);
 }
 
 // ── 심부름 보내기 ────────────────────────────────────
 
-function sendErrand(fromRoomId, toCode, petName) {
+async function sendErrand(fromRoomId, toCode, petName) {
   const db = getDb();
 
-  const targetRoom = findRoomByCode(toCode);
+  const targetRoom = await findRoomByCode(toCode);
   if (!targetRoom) {
     return { success: false, message: `방 코드 "${toCode}"를 찾을 수 없어요! 😥` };
   }
@@ -34,9 +34,9 @@ function sendErrand(fromRoomId, toCode, petName) {
   }
 
   // 진행 중인 심부름 체크
-  const active = db.prepare(`
+  const active = await db.get(`
     SELECT * FROM errands WHERE from_room = ? AND completed = 0 AND expires_at > datetime('now')
-  `).get(fromRoomId);
+  `, [fromRoomId]);
   if (active) {
     return { success: false, message: '이미 심부름 중이에요! 돌아올 때까지 기다려주세요.' };
   }
@@ -49,10 +49,10 @@ function sendErrand(fromRoomId, toCode, petName) {
   ];
   const msg = messages[Math.floor(Math.random() * messages.length)];
 
-  db.prepare(`
+  await db.run(`
     INSERT INTO errands (from_room, to_room, pet_name, gift_gold, message, expires_at)
     VALUES (?, ?, ?, ?, ?, datetime('now', '+30 minutes'))
-  `).run(fromRoomId, targetRoom.room_id, petName, giftGold, msg);
+  `, [fromRoomId, targetRoom.room_id, petName, giftGold, msg]);
 
   return {
     success: true,
@@ -63,12 +63,12 @@ function sendErrand(fromRoomId, toCode, petName) {
 
 // ── 심부름 온 펫 확인 (대상 방에서) ─────────────────
 
-function checkIncomingErrand(roomId) {
+async function checkIncomingErrand(roomId) {
   const db = getDb();
-  const errand = db.prepare(`
+  const errand = await db.get(`
     SELECT * FROM errands WHERE to_room = ? AND completed = 0 AND expires_at > datetime('now')
     ORDER BY created_at DESC LIMIT 1
-  `).get(roomId);
+  `, [roomId]);
 
   if (!errand) return null;
 
@@ -82,24 +82,22 @@ function checkIncomingErrand(roomId) {
 
 // ── 간식 주기 (대상 방이 심부름 온 펫에게) ──────────
 
-function giveErrandSnack(roomId, userId, errandId) {
+async function giveErrandSnack(roomId, userId, errandId) {
   const db = getDb();
-  const errand = db.prepare('SELECT * FROM errands WHERE errand_id = ? AND to_room = ? AND completed = 0').get(errandId, roomId);
+  const errand = await db.get('SELECT * FROM errands WHERE errand_id = ? AND to_room = ? AND completed = 0', [errandId, roomId]);
   if (!errand) return { success: false, message: '심부름 온 펫이 없어요!' };
 
   const snackGold = Math.floor(Math.random() * 20) + 10;
 
-  db.transaction(() => {
-    db.prepare('UPDATE errands SET completed = 1 WHERE errand_id = ?').run(errandId);
-    // 보낸 방에 보상
-    const fromUsers = db.prepare('SELECT * FROM users WHERE room_id = ?').all(errand.from_room);
-    const perUser = Math.floor((errand.gift_gold + snackGold) / Math.max(fromUsers.length, 1));
-    for (const u of fromUsers) {
-      db.prepare('UPDATE users SET gold = gold + ? WHERE user_id = ? AND room_id = ?').run(perUser, u.user_id, errand.from_room);
-    }
-    // 준 방에도 약간의 보상
-    db.prepare('UPDATE users SET gold = gold + ? WHERE user_id = ? AND room_id = ?').run(10, userId, roomId);
-  })();
+  await db.run('UPDATE errands SET completed = 1 WHERE errand_id = ?', [errandId]);
+  // 보낸 방에 보상
+  const fromUsers = await db.all('SELECT * FROM users WHERE room_id = ?', [errand.from_room]);
+  const perUser = Math.floor((errand.gift_gold + snackGold) / Math.max(fromUsers.length, 1));
+  for (const u of fromUsers) {
+    await db.run('UPDATE users SET gold = gold + ? WHERE user_id = ? AND room_id = ?', [perUser, u.user_id, errand.from_room]);
+  }
+  // 준 방에도 약간의 보상
+  await db.run('UPDATE users SET gold = gold + ? WHERE user_id = ? AND room_id = ?', [10, userId, roomId]);
 
   return {
     success: true,

@@ -22,13 +22,13 @@ const LATE_STORIES = [
 
 // ── 탐험 보내기 ──────────────────────────────────────
 
-function startExpedition(roomId, userId) {
+async function startExpedition(roomId, userId) {
   const db = getDb();
 
   // 진행 중인 탐험 체크
-  const active = db.prepare(`
+  const active = await db.get(`
     SELECT * FROM expeditions WHERE room_id = ? AND collected = 0 AND returns_at > datetime('now')
-  `).get(roomId);
+  `, [roomId]);
   if (active) {
     const returnsAt = new Date(active.returns_at + 'Z');
     const now = new Date();
@@ -40,9 +40,9 @@ function startExpedition(roomId, userId) {
   }
 
   // 수집 안 한 탐험 체크
-  const uncollected = db.prepare(`
+  const uncollected = await db.get(`
     SELECT * FROM expeditions WHERE room_id = ? AND collected = 0 AND returns_at <= datetime('now')
-  `).get(roomId);
+  `, [roomId]);
   if (uncollected) {
     return {
       success: false,
@@ -62,10 +62,10 @@ function startExpedition(roomId, userId) {
   const lateStory = isLate ? LATE_STORIES[Math.floor(Math.random() * LATE_STORIES.length)] : null;
   const finalStory = lateStory ? `${storyData.story}\n\n${lateStory}` : storyData.story;
 
-  db.prepare(`
+  await db.run(`
     INSERT INTO expeditions (room_id, started_by, duration_min, reward_type, reward_value, reward_detail, story, returns_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', '+${actualDuration} minutes'))
-  `).run(roomId, userId, actualDuration, storyData.reward, rewardValue, storyData.story, finalStory);
+  `, [roomId, userId, actualDuration, storyData.reward, rewardValue, storyData.story, finalStory]);
 
   const hours = Math.floor(durationMin / 60);
   const mins = durationMin % 60;
@@ -79,18 +79,18 @@ function startExpedition(roomId, userId) {
 
 // ── 귀환 & 보상 수령 ────────────────────────────────
 
-function collectExpedition(roomId, userId) {
+async function collectExpedition(roomId, userId) {
   const db = getDb();
 
-  const expedition = db.prepare(`
+  const expedition = await db.get(`
     SELECT * FROM expeditions WHERE room_id = ? AND collected = 0 AND returns_at <= datetime('now')
     ORDER BY started_at DESC LIMIT 1
-  `).get(roomId);
+  `, [roomId]);
 
   if (!expedition) {
-    const active = db.prepare(`
+    const active = await db.get(`
       SELECT * FROM expeditions WHERE room_id = ? AND collected = 0 AND returns_at > datetime('now')
-    `).get(roomId);
+    `, [roomId]);
     if (active) {
       const returnsAt = new Date(active.returns_at + 'Z');
       const remaining = Math.ceil((returnsAt - new Date()) / 60000);
@@ -104,29 +104,27 @@ function collectExpedition(roomId, userId) {
   const value = expedition.reward_value;
   let rewardMsg = '';
 
-  db.transaction(() => {
-    db.prepare('UPDATE expeditions SET collected = 1 WHERE exp_id = ?').run(expedition.exp_id);
+  await db.run('UPDATE expeditions SET collected = 1 WHERE exp_id = ?', [expedition.exp_id]);
 
-    if (reward === 'gold') {
-      // 방 전원에게 분배
-      const users = db.prepare('SELECT * FROM users WHERE room_id = ?').all(roomId);
-      const perUser = Math.floor(value / Math.max(users.length, 1));
-      for (const u of users) {
-        db.prepare('UPDATE users SET gold = gold + ? WHERE user_id = ? AND room_id = ?').run(perUser, u.user_id, roomId);
-      }
-      rewardMsg = `💰 ${value}G 획득! (${users.length}명에게 ${perUser}G씩 분배)`;
-    } else if (reward === 'happiness') {
-      db.prepare('UPDATE pets SET happiness = MIN(100, happiness + ?) WHERE room_id = ?').run(value, roomId);
-      rewardMsg = `💕 행복도 +${value}!`;
-    } else if (reward === 'exp') {
-      db.prepare('UPDATE pets SET exp = exp + ? WHERE room_id = ?').run(value, roomId);
-      db.prepare('UPDATE rooms SET total_exp = total_exp + ? WHERE room_id = ?').run(value, roomId);
-      rewardMsg = `✨ 경험치 +${value}!`;
+  if (reward === 'gold') {
+    // 방 전원에게 분배
+    const users = await db.all('SELECT * FROM users WHERE room_id = ?', [roomId]);
+    const perUser = Math.floor(value / Math.max(users.length, 1));
+    for (const u of users) {
+      await db.run('UPDATE users SET gold = gold + ? WHERE user_id = ? AND room_id = ?', [perUser, u.user_id, roomId]);
     }
+    rewardMsg = `💰 ${value}G 획득! (${users.length}명에게 ${perUser}G씩 분배)`;
+  } else if (reward === 'happiness') {
+    await db.run('UPDATE pets SET happiness = MIN(100, happiness + ?) WHERE room_id = ?', [value, roomId]);
+    rewardMsg = `💕 행복도 +${value}!`;
+  } else if (reward === 'exp') {
+    await db.run('UPDATE pets SET exp = exp + ? WHERE room_id = ?', [value, roomId]);
+    await db.run('UPDATE rooms SET total_exp = total_exp + ? WHERE room_id = ?', [value, roomId]);
+    rewardMsg = `✨ 경험치 +${value}!`;
+  }
 
-    db.prepare(`INSERT INTO activity_log (room_id, user_id, action, detail, gold_change, exp_change) VALUES (?, ?, 'expedition', ?, ?, ?)`)
-      .run(roomId, userId, expedition.story, reward === 'gold' ? value : 0, reward === 'exp' ? value : 0);
-  })();
+  await db.run(`INSERT INTO activity_log (room_id, user_id, action, detail, gold_change, exp_change) VALUES (?, ?, 'expedition', ?, ?, ?)`,
+    [roomId, userId, expedition.story, reward === 'gold' ? value : 0, reward === 'exp' ? value : 0]);
 
   return {
     success: true,
@@ -136,11 +134,12 @@ function collectExpedition(roomId, userId) {
 
 // ── 탐험 중인지 확인 (먹이 주기 방어용) ─────────────
 
-function isOnExpedition(roomId) {
+async function isOnExpedition(roomId) {
   const db = getDb();
-  return !!db.prepare(`
+  const row = await db.get(`
     SELECT 1 FROM expeditions WHERE room_id = ? AND collected = 0 AND returns_at > datetime('now')
-  `).get(roomId);
+  `, [roomId]);
+  return !!row;
 }
 
 module.exports = { startExpedition, collectExpedition, isOnExpedition };

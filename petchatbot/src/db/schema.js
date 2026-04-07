@@ -1,25 +1,44 @@
-const Database = require('better-sqlite3');
-const path = require('path');
+const { createClient } = require('@libsql/client');
 
-const DB_PATH = path.join(__dirname, '..', '..', 'petgame.db');
+const client = createClient({
+  url: process.env.TURSO_URL || 'file:petgame.db',
+  authToken: process.env.TURSO_AUTH_TOKEN || undefined,
+});
 
-let db;
+// ── 동기식 API를 흉내내는 래퍼 ─────────────────────
+
+const db = {
+  client,
+  async run(sql, params = []) {
+    return client.execute({ sql, args: params });
+  },
+  async get(sql, params = []) {
+    const result = await client.execute({ sql, args: params });
+    return result.rows[0] || null;
+  },
+  async all(sql, params = []) {
+    const result = await client.execute({ sql, args: params });
+    return result.rows;
+  },
+  async exec(sql) {
+    const statements = sql.split(';').map(s => s.trim()).filter(s => s.length > 0);
+    for (const stmt of statements) {
+      await client.execute(stmt);
+    }
+  },
+  async batch(stmts) {
+    return client.batch(stmts, 'write');
+  },
+};
 
 function getDb() {
-  if (!db) {
-    db = new Database(DB_PATH);
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
-  }
   return db;
 }
 
-function initializeDb() {
-  const db = getDb();
-
-  db.exec(`
-    -- 그룹 채팅방
-    CREATE TABLE IF NOT EXISTS rooms (
+async function initializeDb() {
+  // 테이블 생성 (각각 개별 실행 — Turso는 다중 statement 미지원)
+  const tables = [
+    `CREATE TABLE IF NOT EXISTS rooms (
       room_id TEXT PRIMARY KEY,
       room_name TEXT DEFAULT '우리방',
       room_code TEXT UNIQUE,
@@ -27,10 +46,8 @@ function initializeDb() {
       weather_buff TEXT DEFAULT NULL,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now'))
-    );
-
-    -- 유저
-    CREATE TABLE IF NOT EXISTS users (
+    )`,
+    `CREATE TABLE IF NOT EXISTS users (
       user_id TEXT NOT NULL,
       room_id TEXT NOT NULL,
       nickname TEXT DEFAULT '익명',
@@ -38,12 +55,9 @@ function initializeDb() {
       contribution INTEGER DEFAULT 0,
       last_active_at TEXT DEFAULT (datetime('now')),
       created_at TEXT DEFAULT (datetime('now')),
-      PRIMARY KEY (user_id, room_id),
-      FOREIGN KEY (room_id) REFERENCES rooms(room_id)
-    );
-
-    -- 펫 (방당 하나)
-    CREATE TABLE IF NOT EXISTS pets (
+      PRIMARY KEY (user_id, room_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS pets (
       pet_id INTEGER PRIMARY KEY AUTOINCREMENT,
       room_id TEXT UNIQUE NOT NULL,
       name TEXT DEFAULT '알',
@@ -51,61 +65,45 @@ function initializeDb() {
       exp INTEGER DEFAULT 0,
       evolution_stage TEXT DEFAULT 'egg',
       evolution_type TEXT DEFAULT NULL,
-      -- 스탯
       strength INTEGER DEFAULT 5,
       intelligence INTEGER DEFAULT 5,
       charm INTEGER DEFAULT 5,
-      -- 상태
       fullness INTEGER DEFAULT 50,
       happiness INTEGER DEFAULT 50,
-      -- 먹이 기록 (진화 분기용)
       meat_fed INTEGER DEFAULT 0,
       veggie_fed INTEGER DEFAULT 0,
-      -- 성격
       nature TEXT DEFAULT NULL,
-      -- 환생
       generation INTEGER DEFAULT 1,
       legacy_bonus_str INTEGER DEFAULT 0,
       legacy_bonus_int INTEGER DEFAULT 0,
       legacy_bonus_chm INTEGER DEFAULT 0,
-      -- 연속 포만도 유지 일수
       well_fed_streak INTEGER DEFAULT 0,
-      -- 연속 고기 먹인 횟수
       consecutive_meat INTEGER DEFAULT 0,
-      -- 이미지
       current_image_key TEXT DEFAULT 'egg_default',
       created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (room_id) REFERENCES rooms(room_id)
-    );
-
-    -- 진화 히스토리
-    CREATE TABLE IF NOT EXISTS evolution_log (
+      updated_at TEXT DEFAULT (datetime('now'))
+    )`,
+    `CREATE TABLE IF NOT EXISTS evolution_log (
       log_id INTEGER PRIMARY KEY AUTOINCREMENT,
       pet_id INTEGER NOT NULL,
       from_stage TEXT NOT NULL,
       to_stage TEXT NOT NULL,
       evolution_type TEXT,
       condition_met TEXT,
-      evolved_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (pet_id) REFERENCES pets(pet_id)
-    );
-
-    -- 먹이 아이템 정의
-    CREATE TABLE IF NOT EXISTS food_items (
+      evolved_at TEXT DEFAULT (datetime('now'))
+    )`,
+    `CREATE TABLE IF NOT EXISTS food_items (
       food_id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       emoji TEXT NOT NULL,
       cost INTEGER NOT NULL,
       fullness_gain INTEGER NOT NULL,
       exp_gain INTEGER NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('meat', 'veggie', 'special')),
+      type TEXT NOT NULL,
       stat_bonus_type TEXT,
       stat_bonus_value INTEGER DEFAULT 0
-    );
-
-    -- 활동 로그 (랭킹/기여도용)
-    CREATE TABLE IF NOT EXISTS activity_log (
+    )`,
+    `CREATE TABLE IF NOT EXISTS activity_log (
       log_id INTEGER PRIMARY KEY AUTOINCREMENT,
       room_id TEXT NOT NULL,
       user_id TEXT NOT NULL,
@@ -114,10 +112,8 @@ function initializeDb() {
       gold_change INTEGER DEFAULT 0,
       exp_change INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
-    );
-
-    -- 약탈 이벤트
-    CREATE TABLE IF NOT EXISTS raid_events (
+    )`,
+    `CREATE TABLE IF NOT EXISTS raid_events (
       raid_id INTEGER PRIMARY KEY AUTOINCREMENT,
       room_id TEXT NOT NULL,
       attacker_id TEXT,
@@ -128,22 +124,16 @@ function initializeDb() {
       expires_at TEXT NOT NULL,
       resolved INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
-    );
-
-    -- ═══ 신규 테이블 ═══
-
-    -- 칭호/업적
-    CREATE TABLE IF NOT EXISTS achievements (
+    )`,
+    `CREATE TABLE IF NOT EXISTS achievements (
       achieve_id TEXT NOT NULL,
-      target_type TEXT NOT NULL CHECK(target_type IN ('pet', 'user')),
+      target_type TEXT NOT NULL,
       target_id TEXT NOT NULL,
       room_id TEXT NOT NULL,
       unlocked_at TEXT DEFAULT (datetime('now')),
       PRIMARY KEY (achieve_id, target_type, target_id, room_id)
-    );
-
-    -- 탐험
-    CREATE TABLE IF NOT EXISTS expeditions (
+    )`,
+    `CREATE TABLE IF NOT EXISTS expeditions (
       exp_id INTEGER PRIMARY KEY AUTOINCREMENT,
       room_id TEXT NOT NULL,
       started_by TEXT NOT NULL,
@@ -155,29 +145,23 @@ function initializeDb() {
       started_at TEXT DEFAULT (datetime('now')),
       returns_at TEXT NOT NULL,
       collected INTEGER DEFAULT 0
-    );
-
-    -- 데코/가구
-    CREATE TABLE IF NOT EXISTS deco_items (
+    )`,
+    `CREATE TABLE IF NOT EXISTS deco_items (
       deco_id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       emoji TEXT NOT NULL,
-      category TEXT NOT NULL CHECK(category IN ('furniture', 'background', 'accessory')),
+      category TEXT NOT NULL,
       cost INTEGER NOT NULL,
       effect_desc TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS room_deco (
+    )`,
+    `CREATE TABLE IF NOT EXISTS room_deco (
       room_id TEXT NOT NULL,
       deco_id TEXT NOT NULL,
       equipped INTEGER DEFAULT 0,
       purchased_at TEXT DEFAULT (datetime('now')),
-      PRIMARY KEY (room_id, deco_id),
-      FOREIGN KEY (deco_id) REFERENCES deco_items(deco_id)
-    );
-
-    -- 퀴즈
-    CREATE TABLE IF NOT EXISTS quiz_events (
+      PRIMARY KEY (room_id, deco_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS quiz_events (
       quiz_id INTEGER PRIMARY KEY AUTOINCREMENT,
       room_id TEXT NOT NULL,
       question TEXT NOT NULL,
@@ -187,10 +171,8 @@ function initializeDb() {
       expires_at TEXT NOT NULL,
       resolved INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
-    );
-
-    -- 심부름 (방간 이동)
-    CREATE TABLE IF NOT EXISTS errands (
+    )`,
+    `CREATE TABLE IF NOT EXISTS errands (
       errand_id INTEGER PRIMARY KEY AUTOINCREMENT,
       from_room TEXT NOT NULL,
       to_room TEXT NOT NULL,
@@ -200,10 +182,8 @@ function initializeDb() {
       completed INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now')),
       expires_at TEXT NOT NULL
-    );
-
-    -- 운세 기록 (일일 1회 제한용)
-    CREATE TABLE IF NOT EXISTS fortune_log (
+    )`,
+    `CREATE TABLE IF NOT EXISTS fortune_log (
       user_id TEXT NOT NULL,
       room_id TEXT NOT NULL,
       fortune_date TEXT NOT NULL,
@@ -212,10 +192,8 @@ function initializeDb() {
       buff_value REAL DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now')),
       PRIMARY KEY (user_id, room_id, fortune_date)
-    );
-
-    -- 환생 기록
-    CREATE TABLE IF NOT EXISTS rebirth_log (
+    )`,
+    `CREATE TABLE IF NOT EXISTS rebirth_log (
       rebirth_id INTEGER PRIMARY KEY AUTOINCREMENT,
       room_id TEXT NOT NULL,
       generation INTEGER DEFAULT 1,
@@ -223,56 +201,50 @@ function initializeDb() {
       prev_type TEXT,
       legacy_bonus TEXT,
       reborn_at TEXT DEFAULT (datetime('now'))
-    );
-  `);
+    )`,
+  ];
 
-  // 기본 먹이 아이템 삽입
-  const insertFood = db.prepare(`
-    INSERT OR IGNORE INTO food_items (food_id, name, emoji, cost, fullness_gain, exp_gain, type, stat_bonus_type, stat_bonus_value)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
+  for (const sql of tables) {
+    await client.execute(sql);
+  }
 
+  // 기본 데이터 삽입
   const defaultFoods = [
-    ['bread',     '빵',       '🍞', 10,  8,  5,  'veggie',  null, 0],
-    ['apple',     '사과',     '🍎', 15, 10,  8,  'veggie',  'intelligence', 1],
-    ['salad',     '샐러드',   '🥗', 20, 12, 10,  'veggie',  'intelligence', 2],
-    ['meat',      '고기',     '🍖', 20, 15, 12,  'meat',    'strength', 1],
-    ['steak',     '스테이크', '🥩', 35, 20, 18,  'meat',    'strength', 2],
-    ['cake',      '케이크',   '🎂', 30, 10, 15,  'special', 'charm', 3],
+    ['bread', '빵', '🍞', 10, 8, 5, 'veggie', null, 0],
+    ['apple', '사과', '🍎', 15, 10, 8, 'veggie', 'intelligence', 1],
+    ['salad', '샐러드', '🥗', 20, 12, 10, 'veggie', 'intelligence', 2],
+    ['meat', '고기', '🍖', 20, 15, 12, 'meat', 'strength', 1],
+    ['steak', '스테이크', '🥩', 35, 20, 18, 'meat', 'strength', 2],
+    ['cake', '케이크', '🎂', 30, 10, 15, 'special', 'charm', 3],
     ['golden_apple', '황금사과', '✨', 80, 30, 40, 'special', null, 0],
   ];
+  for (const f of defaultFoods) {
+    await db.run(
+      'INSERT OR IGNORE INTO food_items (food_id, name, emoji, cost, fullness_gain, exp_gain, type, stat_bonus_type, stat_bonus_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      f
+    );
+  }
 
-  const insertMany = db.transaction(() => {
-    for (const food of defaultFoods) {
-      insertFood.run(...food);
-    }
-  });
-  insertMany();
-
-  // 기본 데코 아이템
-  const insertDeco = db.prepare(`
-    INSERT OR IGNORE INTO deco_items (deco_id, name, emoji, category, cost, effect_desc)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
   const defaultDecos = [
-    ['red_sofa',    '빨간 소파',     '🛋️', 'furniture',  100, '행복도 감소 -20%'],
-    ['bookshelf',   '책장',          '📚', 'furniture',  120, '훈련 경험치 +10%'],
-    ['cat_tower',   '캣타워',        '🗼', 'furniture',  150, '매력 훈련 +1 보너스'],
-    ['garden_bg',   '정원 배경',     '🌸', 'background', 200, '포만도 감소 -15%'],
-    ['space_bg',    '우주 배경',     '🌌', 'background', 300, '탐험 보상 +20%'],
-    ['castle_bg',   '성 배경',       '🏰', 'background', 500, '골드 수입 +10%'],
-    ['ribbon',      '리본',          '🎀', 'accessory',   80, '매력 +2'],
-    ['crown',       '왕관',          '👑', 'accessory',  400, '모든 스탯 +1'],
-    ['scarf',       '목도리',        '🧣', 'accessory',  100, '행복도 감소 -10%'],
-    ['xmas_tree',   '크리스마스 트리','🎄', 'furniture',  250, '황금알 확률 +5%'],
+    ['red_sofa', '빨간 소파', '🛋️', 'furniture', 100, '행복도 감소 -20%'],
+    ['bookshelf', '책장', '📚', 'furniture', 120, '훈련 경험치 +10%'],
+    ['cat_tower', '캣타워', '🗼', 'furniture', 150, '매력 훈련 +1 보너스'],
+    ['garden_bg', '정원 배경', '🌸', 'background', 200, '포만도 감소 -15%'],
+    ['space_bg', '우주 배경', '🌌', 'background', 300, '탐험 보상 +20%'],
+    ['castle_bg', '성 배경', '🏰', 'background', 500, '골드 수입 +10%'],
+    ['ribbon', '리본', '🎀', 'accessory', 80, '매력 +2'],
+    ['crown', '왕관', '👑', 'accessory', 400, '모든 스탯 +1'],
+    ['scarf', '목도리', '🧣', 'accessory', 100, '행복도 감소 -10%'],
+    ['xmas_tree', '크리스마스 트리', '🎄', 'furniture', 250, '황금알 확률 +5%'],
   ];
-  const insertDecoMany = db.transaction(() => {
-    for (const d of defaultDecos) insertDeco.run(...d);
-  });
-  insertDecoMany();
+  for (const d of defaultDecos) {
+    await db.run(
+      'INSERT OR IGNORE INTO deco_items (deco_id, name, emoji, category, cost, effect_desc) VALUES (?, ?, ?, ?, ?, ?)',
+      d
+    );
+  }
 
-  console.log('[DB] 초기화 완료');
-  return db;
+  console.log('[DB] Turso 초기화 완료');
 }
 
 module.exports = { getDb, initializeDb };
