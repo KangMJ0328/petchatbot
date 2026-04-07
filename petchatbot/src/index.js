@@ -29,6 +29,15 @@ app.use('/api/skill', skillRouter);
 (async () => {
   await initializeDb();
 
+  // 슬립 방지 — 4분마다 자기 자신에게 ping
+  const BASE_URL = process.env.BASE_URL;
+  if (BASE_URL && BASE_URL.includes('onrender.com')) {
+    cron.schedule('*/4 * * * *', () => {
+      fetch(BASE_URL).catch(() => {});
+    });
+    console.log('[PING] 슬립 방지 활성화 (4분 간격)');
+  }
+
   // 만료된 이벤트 정리 (매분)
   cron.schedule('* * * * *', async () => {
     try {
