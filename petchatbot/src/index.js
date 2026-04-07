@@ -10,24 +10,8 @@ const { resolveExpiredQuizzes } = require('./game/quiz');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 미들웨어 — raw body → UTF-8 JSON 파싱
-app.use((req, res, next) => {
-  if (req.headers['content-type']?.includes('application/json')) {
-    let chunks = [];
-    req.on('data', chunk => chunks.push(chunk));
-    req.on('end', () => {
-      try {
-        const raw = Buffer.concat(chunks).toString('utf8');
-        req.body = JSON.parse(raw);
-      } catch (e) {
-        req.body = {};
-      }
-      next();
-    });
-  } else {
-    next();
-  }
-});
+// 미들웨어
+app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // 정적 파일 (펫 이미지)
