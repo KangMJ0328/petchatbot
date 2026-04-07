@@ -760,7 +760,7 @@ router.post('/fallback', async (req, res) => {
       await events.giveGold(userId, roomId, 20, '일일 출석 보상');
     }
 
-    console.log('[FALLBACK] utterance:', JSON.stringify(utterance), 'cmd:', JSON.stringify(cmd), 'arg:', JSON.stringify(arg));
+    console.log('[FALLBACK] utterance hex:', Buffer.from(utterance).toString('hex'), 'cmd:', Buffer.from(cmd).toString('hex'), 'raw:', utterance);
 
     switch (cmd) {
       case '/시작': {
