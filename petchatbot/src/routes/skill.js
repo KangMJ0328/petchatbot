@@ -767,7 +767,14 @@ router.post('/fallback', async (req, res) => {
       attendanceMsg = '📅 출석 보상 +30G!\n\n';
     }
 
-    console.log('[FALLBACK] utterance hex:', Buffer.from(utterance).toString('hex'), 'cmd:', Buffer.from(cmd).toString('hex'), 'raw:', utterance);
+    console.log('[FALLBACK] cmd:', JSON.stringify(cmd), 'len:', cmd.length, 'codes:', [...cmd].map(c => c.charCodeAt(0)));
+
+    // 디버그: 강제 테스트
+    if (cmd === '/날씨') {
+      console.log('[MATCH] /날씨 matched!');
+    } else {
+      console.log('[NOMATCH] cmd did not match /날씨. cmd bytes:', Buffer.from(cmd).toString('hex'), 'expected:', Buffer.from('/날씨').toString('hex'));
+    }
 
     switch (cmd) {
       case '/시작': {
