@@ -752,12 +752,15 @@ router.post('/fallback', async (req, res) => {
 
     await petManager.initRoom(roomId, userId);
 
-    // 출석 보상 (첫 발화 시)
+    // 출석 보상 (일일 1회)
     const user = await petManager.getUserInfo(userId, roomId);
     const now = new Date().toISOString().split('T')[0];
-    const lastActive = user.last_active_at ? user.last_active_at.split('T')[0] : '';
+    const lastActive = user.last_active_at ? String(user.last_active_at).split('T')[0].split(' ')[0] : '';
     if (lastActive !== now) {
       await events.giveGold(userId, roomId, 20, '일일 출석 보상');
+      // last_active_at 업데이트
+      const db = require('../db/schema').getDb();
+      await db.run("UPDATE users SET last_active_at = datetime('now') WHERE user_id = ? AND room_id = ?", [userId, roomId]);
     }
 
     console.log('[FALLBACK] utterance hex:', Buffer.from(utterance).toString('hex'), 'cmd:', Buffer.from(cmd).toString('hex'), 'raw:', utterance);
