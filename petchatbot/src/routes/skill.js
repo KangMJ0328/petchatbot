@@ -938,8 +938,8 @@ router.post('/fallback', async (req, res) => {
         ));
     }
   } catch (err) {
-    console.error('[/fallback]', err);
-    res.json(kakao.simpleText('오류가 발생했어요. 다시 시도해주세요.'));
+    console.error('[/fallback] ERROR:', err.message, err.stack?.split('\n')[1]);
+    res.json(kakao.simpleText(`오류: ${err.message}`));
   }
 });
 
