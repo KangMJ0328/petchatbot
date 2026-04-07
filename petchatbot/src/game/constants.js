@@ -30,8 +30,9 @@ const EVOLUTION_TYPES = {
 };
 
 // 레벨업에 필요한 경험치 (레벨 -> 필요 경험치)
+// Lv1:15, Lv5:50, Lv10:85, Lv20:155, Lv30:225
 function expForLevel(level) {
-  return Math.floor(20 * Math.pow(level, 1.5));
+  return Math.floor(15 + level * 7);
 }
 
 // 포만도 자연 감소량 (시간당)
