@@ -24,9 +24,12 @@ function extractContext(body) {
   const params = body.action?.params || {};
   const utterance = (userRequest.utterance || '').trim();
 
+  // roomId: 그룹방이면 chatRoom.id, 1:1이면 user.id
+  const roomId = userRequest.chatRoom?.id || user.id || 'default_room';
+
   return {
     userId: user.id || 'unknown',
-    roomId: userRequest.block?.id || user.id || 'default_room',
+    roomId,
     utterance,
     params,
   };
@@ -756,11 +759,12 @@ router.post('/fallback', async (req, res) => {
     const user = await petManager.getUserInfo(userId, roomId);
     const now = new Date().toISOString().split('T')[0];
     const lastActive = user.last_active_at ? String(user.last_active_at).split('T')[0].split(' ')[0] : '';
+    let attendanceMsg = '';
     if (lastActive !== now) {
-      await events.giveGold(userId, roomId, 20, '일일 출석 보상');
-      // last_active_at 업데이트
+      await events.giveGold(userId, roomId, 30, '일일 출석 보상');
       const db = require('../db/schema').getDb();
       await db.run("UPDATE users SET last_active_at = datetime('now') WHERE user_id = ? AND room_id = ?", [userId, roomId]);
+      attendanceMsg = '📅 출석 보상 +30G!\n\n';
     }
 
     console.log('[FALLBACK] utterance hex:', Buffer.from(utterance).toString('hex'), 'cmd:', Buffer.from(cmd).toString('hex'), 'raw:', utterance);
@@ -929,7 +933,7 @@ router.post('/fallback', async (req, res) => {
 
       default:
         return res.json(kakao.textWithQuickReplies(
-          `안녕하세요! 펫 키우기 챗봇이에요! 🐾\n아래 명령어로 시작해보세요.\n\n/ 를 입력하면 전체 명령어를 볼 수 있어요!`,
+          `${attendanceMsg}안녕하세요! 펫 키우기 챗봇이에요! 🐾\n아래 명령어로 시작해보세요.\n\n/ 를 입력하면 전체 명령어를 볼 수 있어요!`,
           [
             { label: '🥚 시작', messageText: '/시작' },
             { label: '📖 도움말', messageText: '/' },
