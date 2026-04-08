@@ -767,15 +767,6 @@ router.post('/fallback', async (req, res) => {
       attendanceMsg = '📅 출석 보상 +30G!\n\n';
     }
 
-    console.log('[FALLBACK] cmd:', JSON.stringify(cmd), 'len:', cmd.length, 'codes:', [...cmd].map(c => c.charCodeAt(0)));
-
-    // 디버그: 강제 테스트
-    if (cmd === '/날씨') {
-      console.log('[MATCH] /날씨 matched!');
-    } else {
-      console.log('[NOMATCH] cmd did not match /날씨. cmd bytes:', Buffer.from(cmd).toString('hex'), 'expected:', Buffer.from('/날씨').toString('hex'));
-    }
-
     switch (cmd) {
       case '/시작': {
         // 이미 펫이 있으면 정보 표시
@@ -783,7 +774,7 @@ router.post('/fallback', async (req, res) => {
         if (existingStatus && existingStatus.pet.level > 1) {
           return res.json(kakao.basicCardWithQuickReplies({
             title: `이미 ${existingStatus.pet.name}(이)가 있어요!`,
-            description: `Lv.${existingStatus.pet.level} ${existingStatus.pet.name}\n\n이미 펫이 있어서 새로 만들 수 없어요.\n/정보 로 펫 상태를 확인하세요!`,
+            description: `${attendanceMsg}Lv.${existingStatus.pet.level} ${existingStatus.pet.name}\n\n이미 펫이 있어서 새로 만들 수 없어요.\n/정보 로 펫 상태를 확인하세요!`,
             imageUrl: existingStatus.display.imageUrl,
             quickReplies: [
               { label: '📊 펫 정보', messageText: '/정보' },
@@ -795,7 +786,7 @@ router.post('/fallback', async (req, res) => {
         await petManager.initRoom(roomId, userId);
         return res.json(kakao.basicCardWithQuickReplies({
           title: '🥚 펫이 태어났어요!',
-          description: `방에 새로운 알이 나타났어요!\n모두 함께 먹이를 주고 키워보세요!\n\n💰 시작 골드: 100G\n🍖 /먹이 - 먹이 주기\n📊 /정보 - 펫 상태`,
+          description: `${attendanceMsg}방에 새로운 알이 나타났어요!\n모두 함께 먹이를 주고 키워보세요!\n\n💰 시작 골드: 100G\n🍖 /먹이 - 먹이 주기\n📊 /정보 - 펫 상태`,
           imageUrl: `${BASE_URL}/images/egg_default.png`,
           quickReplies: [
             { label: '🍖 먹이주기', messageText: '/먹이' },
@@ -834,10 +825,31 @@ router.post('/fallback', async (req, res) => {
         const u = await petManager.getUserInfo(userId, roomId);
         return res.json(kakao.simpleText(`👤 내 정보\n\n💰 골드: ${u.gold}G\n⭐ 기여도: ${u.contribution}\n🕐 마지막 활동: ${u.last_active_at}`));
       }
-      case '/약탈':
-        return res.json(kakao.simpleText((await events.startRaid(roomId, userId)).message));
-      case '/방어':
-        return res.json(kakao.simpleText((await events.defendRaid(roomId, userId)).message));
+      case '/약탈': {
+        // PvE 약탈 — 도둑 너구리 등장
+        const db2 = require('../db/schema').getDb();
+        const activeRaid = await db2.get("SELECT * FROM raid_events WHERE room_id = ? AND resolved = 0 AND expires_at > datetime('now')", [roomId]);
+        if (activeRaid) {
+          return res.json(kakao.simpleText('⚠️ 이미 도둑이 나타나 있어요!\n60초 안에 /방어 를 입력하세요!'));
+        }
+        const stealGold = Math.floor(Math.random() * 30) + 10;
+        await db2.run("INSERT INTO raid_events (room_id, attacker_id, target_item, gold_at_stake, expires_at) VALUES (?, ?, ?, ?, datetime('now', '+60 seconds'))",
+          [roomId, 'NPC_RACCOON', '간식', stealGold]);
+        return res.json(kakao.textWithQuickReplies(
+          `🦝 도둑 너구리 출현!\n\n너구리가 펫의 간식 ${stealGold}G어치를 훔치려 해요!\n60초 안에 /방어 를 입력하세요!`,
+          [{ label: '🛡️ 방어하기', messageText: '/방어' }],
+        ));
+      }
+      case '/방어': {
+        const db3 = require('../db/schema').getDb();
+        const raid = await db3.get("SELECT * FROM raid_events WHERE room_id = ? AND resolved = 0 AND expires_at > datetime('now') ORDER BY created_at DESC LIMIT 1", [roomId]);
+        if (!raid) return res.json(kakao.simpleText('현재 도둑이 없어요! 😊'));
+        const defendReward = Math.floor(raid.gold_at_stake * 0.5) + 10;
+        await db3.run('UPDATE raid_events SET defended = 1, defender_id = ?, resolved = 1 WHERE raid_id = ?', [userId, raid.raid_id]);
+        await db3.run('UPDATE users SET gold = gold + ? WHERE user_id = ? AND room_id = ?', [defendReward, userId, roomId]);
+        await db3.run("INSERT INTO activity_log (room_id, user_id, action, detail, gold_change) VALUES (?, ?, 'defend', '도둑 너구리 퇴치', ?)", [roomId, userId, defendReward]);
+        return res.json(kakao.simpleText(`🛡️ 방어 성공!\n\n도둑 너구리를 쫓아냈어요! 🦝💨\n보상: +${defendReward}G`));
+      }
       case '/랭킹': {
         const rankings = await events.getRanking(10);
         if (rankings.length === 0) return res.json(kakao.simpleText('아직 랭킹이 없어요!'));
