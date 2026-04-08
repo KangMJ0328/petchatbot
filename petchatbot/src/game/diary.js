@@ -16,10 +16,8 @@ const DIARY_TEMPLATES = {
   bonus:      (d) => `${d.user}님이 놀러 왔어요! 반가웠어요! 🎉`,
 };
 
-// 유저 ID → 닉네임 변환 (긴 해시값 대신 짧은 이름)
-function shortName(userId) {
-  if (!userId || userId.length < 10) return userId || '주인';
-  return '주인' + userId.slice(-4);
+function shortName() {
+  return '주인';
 }
 
 async function generateDiary(roomId) {
