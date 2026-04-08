@@ -208,20 +208,25 @@ async function initializeDb() {
     await client.execute(sql);
   }
 
-  // 기본 데이터 삽입
+  // 기본 데이터 삽입 (밸런스 조정 — 비싼 먹이일수록 가성비 UP)
   const defaultFoods = [
-    ['bread', '빵', '🍞', 10, 8, 5, 'veggie', null, 0],
-    ['apple', '사과', '🍎', 15, 10, 8, 'veggie', 'intelligence', 1],
-    ['salad', '샐러드', '🥗', 20, 12, 10, 'veggie', 'intelligence', 2],
-    ['meat', '고기', '🍖', 20, 15, 12, 'meat', 'strength', 1],
-    ['steak', '스테이크', '🥩', 35, 20, 18, 'meat', 'strength', 2],
-    ['cake', '케이크', '🎂', 30, 10, 15, 'special', 'charm', 3],
-    ['golden_apple', '황금사과', '✨', 80, 30, 40, 'special', null, 0],
+    ['bread', '빵', '🍞', 10, 10, 8, 'veggie', null, 0],
+    ['apple', '사과', '🍎', 15, 15, 12, 'veggie', 'intelligence', 1],
+    ['salad', '샐러드', '🥗', 20, 20, 18, 'veggie', 'intelligence', 2],
+    ['meat', '고기', '🍖', 20, 20, 18, 'meat', 'strength', 1],
+    ['steak', '스테이크', '🥩', 35, 35, 35, 'meat', 'strength', 3],
+    ['cake', '케이크', '🎂', 30, 15, 25, 'special', 'charm', 4],
+    ['golden_apple', '황금사과', '✨', 80, 50, 80, 'special', null, 0],
   ];
   for (const f of defaultFoods) {
     await db.run(
       'INSERT OR IGNORE INTO food_items (food_id, name, emoji, cost, fullness_gain, exp_gain, type, stat_bonus_type, stat_bonus_value) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       f
+    );
+    // 기존 데이터도 업데이트
+    await db.run(
+      'UPDATE food_items SET fullness_gain = ?, exp_gain = ?, stat_bonus_value = ? WHERE food_id = ?',
+      [f[4], f[5], f[8], f[0]]
     );
   }
 
