@@ -3,18 +3,24 @@ const { getDb } = require('../db/schema');
 // ── 펫 다이어리: 최근 24시간 활동 요약 ──────────────
 
 const DIARY_TEMPLATES = {
-  feed:       (d) => `오늘 ${d.user || '누군가'}님이 주신 ${d.detail || '먹이'}는 정말 꿀맛이었어요! 🍖`,
+  feed:       (d) => `오늘 ${d.user}님이 주신 ${d.detail || '먹이'}는 정말 꿀맛이었어요! 🍖`,
   train:      (d) => `${d.detail || '훈련'}을 열심히 했더니 몸이 튼튼해진 기분이에요! 💪`,
   levelup:    (d) => `드디어 레벨이 올랐어요! 몸에서 빛이 나기 시작했어요! ✨`,
   evolution:  (d) => `엄청난 변화가 일어났어요... 진화했어요!! 🌟`,
   golden_egg: (d) => `산책 중에 황금알을 발견했어요! 다 같이 나눠 가졌답니다! 🥚✨`,
   expedition: (d) => `모험을 다녀왔어요! ${d.detail || '재밌었어요!'} 🗺️`,
-  defend:     (d) => `도둑이 나타났는데 ${d.user || '영웅'}님이 막아줬어요! 고마워요! 🛡️`,
+  defend:     (d) => `도둑이 나타났는데 ${d.user}님이 막아줬어요! 고마워요! 🛡️`,
   raid:       (d) => `누군가 간식을 노리고 있었어요... 무서웠어요 😰`,
   hungry:     ()  => '배가 고파서 조금 슬펐지만 참았답니다... 🥺',
   happy:      ()  => '오늘은 기분이 아주 좋았어요! 다들 잘 챙겨줘서 행복해요~ 😆',
-  bonus:      (d) => `${d.user || '주인'}님이 놀러 왔어요! 반가웠어요! 🎉`,
+  bonus:      (d) => `${d.user}님이 놀러 왔어요! 반가웠어요! 🎉`,
 };
+
+// 유저 ID → 닉네임 변환 (긴 해시값 대신 짧은 이름)
+function shortName(userId) {
+  if (!userId || userId.length < 10) return userId || '주인';
+  return '주인' + userId.slice(-4);
+}
 
 async function generateDiary(roomId) {
   const db = getDb();
@@ -40,14 +46,14 @@ async function generateDiary(roomId) {
     // 주요 이벤트만 일기에 추가
     if (['evolution', 'golden_egg', 'expedition', 'defend'].includes(log.action)) {
       const tmpl = DIARY_TEMPLATES[log.action];
-      if (tmpl) entries.push(tmpl({ detail: log.detail, user: log.user_id }));
+      if (tmpl) entries.push(tmpl({ detail: log.detail, user: shortName(log.user_id) }));
     }
   }
 
   // 먹이 요약
   if (actionCounts.feed) {
     const lastFeed = logs.find(l => l.action === 'feed');
-    entries.push(DIARY_TEMPLATES.feed({ detail: lastFeed?.detail, user: lastFeed?.user_id }));
+    entries.push(DIARY_TEMPLATES.feed({ detail: lastFeed?.detail, user: shortName(lastFeed?.user_id) }));
   }
 
   // 훈련 요약
