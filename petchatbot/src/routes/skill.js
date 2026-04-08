@@ -187,6 +187,18 @@ async function doFeed(res, roomId, userId, foodId) {
     message += `\n\n${goldenEgg.message}`;
   }
 
+  // 15% 확률로 도둑 너구리 등장
+  if (Math.random() < 0.15) {
+    const raidDb = require('../db/schema').getDb();
+    const activeRaid = await raidDb.get("SELECT 1 FROM raid_events WHERE room_id = ? AND resolved = 0 AND expires_at > datetime('now')", [roomId]);
+    if (!activeRaid) {
+      const stealGold = Math.floor(Math.random() * 30) + 10;
+      await raidDb.run("INSERT INTO raid_events (room_id, attacker_id, target_item, gold_at_stake, expires_at) VALUES (?, ?, ?, ?, datetime('now', '+120 seconds'))",
+        [roomId, 'NPC_RACCOON', '간식', stealGold]);
+      message += `\n\n🦝 도둑 너구리 출현!\n간식 ${stealGold}G를 훔치려 해요!\n2분 안에 /방어 를 입력하세요!`;
+    }
+  }
+
   const status = await petManager.getPetStatus(roomId, BASE_URL);
 
   res.json(kakao.basicCardWithQuickReplies({
@@ -755,9 +767,10 @@ router.post('/fallback', async (req, res) => {
 
     await petManager.initRoom(roomId, userId);
 
-    // 출석 보상 (일일 1회)
+    // 출석 보상 (일일 1회, 한국 시간 기준)
     const user = await petManager.getUserInfo(userId, roomId);
-    const now = new Date().toISOString().split('T')[0];
+    const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+    const now = kstNow.toISOString().split('T')[0];
     const lastActive = user.last_active_at ? String(user.last_active_at).split('T')[0].split(' ')[0] : '';
     let attendanceMsg = '';
     if (lastActive !== now) {
@@ -825,21 +838,8 @@ router.post('/fallback', async (req, res) => {
         const u = await petManager.getUserInfo(userId, roomId);
         return res.json(kakao.simpleText(`👤 내 정보\n\n💰 골드: ${u.gold}G\n⭐ 기여도: ${u.contribution}\n🕐 마지막 활동: ${u.last_active_at}`));
       }
-      case '/약탈': {
-        // PvE 약탈 — 도둑 너구리 등장
-        const db2 = require('../db/schema').getDb();
-        const activeRaid = await db2.get("SELECT * FROM raid_events WHERE room_id = ? AND resolved = 0 AND expires_at > datetime('now')", [roomId]);
-        if (activeRaid) {
-          return res.json(kakao.simpleText('⚠️ 이미 도둑이 나타나 있어요!\n60초 안에 /방어 를 입력하세요!'));
-        }
-        const stealGold = Math.floor(Math.random() * 30) + 10;
-        await db2.run("INSERT INTO raid_events (room_id, attacker_id, target_item, gold_at_stake, expires_at) VALUES (?, ?, ?, ?, datetime('now', '+60 seconds'))",
-          [roomId, 'NPC_RACCOON', '간식', stealGold]);
-        return res.json(kakao.textWithQuickReplies(
-          `🦝 도둑 너구리 출현!\n\n너구리가 펫의 간식 ${stealGold}G어치를 훔치려 해요!\n60초 안에 /방어 를 입력하세요!`,
-          [{ label: '🛡️ 방어하기', messageText: '/방어' }],
-        ));
-      }
+      case '/약탈':
+        return res.json(kakao.simpleText('🦝 도둑 너구리는 먹이를 줄 때 랜덤으로 나타나요!\n나타나면 /방어 로 쫓아내세요!'));
       case '/방어': {
         const db3 = require('../db/schema').getDb();
         const raid = await db3.get("SELECT * FROM raid_events WHERE room_id = ? AND resolved = 0 AND expires_at > datetime('now') ORDER BY created_at DESC LIMIT 1", [roomId]);
@@ -895,12 +895,17 @@ router.post('/fallback', async (req, res) => {
         return res.json(kakao.simpleText(await diary.generateDiary(roomId)));
       case '/운세':
         return res.json(kakao.simpleText((await fortune.drawFortune(userId, roomId)).message));
-      case '/가위바위보': {
-        const [choice, betStr] = arg.split(/\s+/);
-        const bet = parseInt(betStr) || 20;
-        if (!choice) return res.json(kakao.simpleText('사용법: /가위바위보 [가위/바위/보] [골드]'));
-        return res.json(kakao.simpleText((await fortune.rockPaperScissors(userId, roomId, choice, bet)).message));
-      }
+      case '/가위바위보':
+        return res.json(kakao.textWithQuickReplies(
+          `✊✌️✋ 가위바위보! (20G)\n선택하세요!`,
+          [{ label: '✌️ 가위', messageText: '/가위' }, { label: '✊ 바위', messageText: '/바위' }, { label: '✋ 보', messageText: '/보' }],
+        ));
+      case '/가위':
+        return res.json(kakao.simpleText((await fortune.rockPaperScissors(userId, roomId, '가위', 20)).message));
+      case '/바위':
+        return res.json(kakao.simpleText((await fortune.rockPaperScissors(userId, roomId, '바위', 20)).message));
+      case '/보':
+        return res.json(kakao.simpleText((await fortune.rockPaperScissors(userId, roomId, '보', 20)).message));
       case '/퀴즈':
         return res.json(kakao.simpleText((await quiz.createQuiz(roomId)).message));
       case '/정답':

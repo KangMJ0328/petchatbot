@@ -99,30 +99,29 @@ async function rockPaperScissors(userId, roomId, userChoice, betGold) {
   }
 
   const petChoice = choices[Math.floor(Math.random() * 3)];
-  const userIdx = choices.indexOf(userChoice);
-  const petIdx = choices.indexOf(petChoice);
 
+  // 승패 판정: 가위→보, 바위→가위, 보→바위
+  const winMap = { '가위': '보', '바위': '가위', '보': '바위' };
   let result;
-  if (userIdx === petIdx) {
+  if (userChoice === petChoice) {
     result = 'draw';
-  } else if ((userIdx + 1) % 3 === petIdx) {
+  } else if (winMap[userChoice] === petChoice) {
     result = 'win';
   } else {
     result = 'lose';
   }
 
-  let message = `✊✌️✋ 가위바위보!\n\n당신: ${userChoice} vs 펫: ${petChoice}\n\n`;
+  let message = `✊✌️✋ 가위바위보!\n\n나: ${userChoice} vs 펫: ${petChoice}\n\n`;
 
   if (result === 'win') {
     await db.run('UPDATE users SET gold = gold + ? WHERE user_id = ? AND room_id = ?', [betGold, userId, roomId]);
     message += `🎉 승리! +${betGold}G 획득!`;
   } else if (result === 'lose') {
     await db.run('UPDATE users SET gold = gold - ? WHERE user_id = ? AND room_id = ?', [betGold, userId, roomId]);
-    // 진 골드는 펫 행복도로
     await db.run('UPDATE pets SET happiness = MIN(100, happiness + 5) WHERE room_id = ?', [roomId]);
-    message += `😢 패배... -${betGold}G (펫이 좋아해요! 행복도+5)`;
+    message += `😢 패배... -${betGold}G`;
   } else {
-    message += `🤝 무승부! 골드 변동 없음.`;
+    message += `🤝 무승부!`;
   }
 
   return { success: true, message, result };
